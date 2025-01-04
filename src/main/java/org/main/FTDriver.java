@@ -1,5 +1,6 @@
 package org.main;
 
+import lombok.var;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
@@ -9,37 +10,30 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.MultipleOutputs;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 
+import java.io.File;
+import java.io.IOException;
+import java.util.logging.FileHandler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.logging.SimpleFormatter;
+
 public class FTDriver {
+    private static final Logger LOGGER = Logger.getLogger(FTDriver.class.getName());
+
     public static void main(String[] args) throws Exception {
+        // Nastavi logiranje v datoteko
+        setupLogger();
+
         if (args.length != 2) {
-            System.err.println("Usage: FTDriver <input path> <output path>");
+            LOGGER.severe("Usage: FTDriver <input path> <output path>");
             System.exit(-1);
         }
 
-        Configuration conf = new Configuration();
-        Job job = Job.getInstance(conf, "Discrete Fourier Transform");
+        LOGGER.info("Začenjanje Hadoop joba za DFT...");
 
-        // Fine-tune Hadoop configurations for large datasets
-        conf.setInt("mapreduce.input.fileinputformat.split.minsize", 64 * 1024 * 1024); // 64MB
-        conf.setInt("mapreduce.input.fileinputformat.split.maxsize", 128 * 1024 * 1024); // 128MB
-        conf.setInt("mapreduce.map.memory.mb", 4096); // Set mapper memory to 4GB
-        conf.set("mapreduce.map.java.opts", "-Xmx3584m"); // 90% of mapper memory
-        conf.setInt("mapreduce.reduce.memory.mb", 4096); // Set reducer memory to 4GB
-        conf.set("mapreduce.reduce.java.opts", "-Xmx3584m");
+        var conf = new Configuration();
+        var job = Job.getInstance(conf, "Discrete Fourier Transform");
 
-        // Optimize I/O performance
-        conf.setInt("mapreduce.task.io.sort.mb", 512); // Increased buffer size
-        conf.setFloat("mapreduce.map.sort.spill.percent", 0.85f); // Adjusted spill threshold
-        conf.setInt("mapreduce.task.timeout", 600000); // Increase timeout to 10 minutes
-
-        // Enable JVM reuse for better performance
-        conf.setInt("mapreduce.job.jvm.numtasks", -1);
-
-        // Disable speculative execution for consistency in processing
-        conf.setBoolean("mapreduce.map.speculative", false);
-        conf.setBoolean("mapreduce.reduce.speculative", false);
-
-        // Job settings
         job.setJarByClass(FTDriver.class);
         job.setMapperClass(FTMapper.class);
         job.setReducerClass(FTReducer.class);
@@ -47,20 +41,34 @@ public class FTDriver {
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
-        // Configure input and output paths
         FileInputFormat.addInputPath(job, new Path(args[0]));
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
-        // Calculate input size and set reducers
-        long inputSize = new Path(args[0]).getFileSystem(conf).getContentSummary(new Path(args[0])).getLength();
-        int reducerCount = Math.max(1, (int) (inputSize / (128 * 1024 * 1024))); // 1 reducer per 128MB
-        job.setNumReduceTasks(reducerCount);
+        job.setOutputFormatClass(TextOutputFormat.class);
+        MultipleOutputs.addNamedOutput(job, "realOutput", TextOutputFormat.class, Text.class, Text.class);
+        MultipleOutputs.addNamedOutput(job, "imagOutput", TextOutputFormat.class, Text.class, Text.class);
 
-        MultipleOutputs.addNamedOutput(job, "finalRealOutput", TextOutputFormat.class, Text.class, Text.class);
-        MultipleOutputs.addNamedOutput(job, "finalImagOutput", TextOutputFormat.class, Text.class, Text.class);
+        LOGGER.info("Hadoop job konfiguracija je pripravljena.");
 
-        // Job execution
-        boolean success = job.waitForCompletion(true);
-        System.exit(success ? 0 : 1);
+        if (job.waitForCompletion(true)) {
+            LOGGER.info("Hadoop job je uspešno zaključen.");
+            System.exit(0);
+        } else {
+            LOGGER.severe("Hadoop job je spodletel.");
+            System.exit(1);
+        }
+    }
+
+    private static void setupLogger() {
+        try {
+            var fileHandler = new FileHandler(new File("job_logs.log").getAbsolutePath(), true);
+            fileHandler.setFormatter(new SimpleFormatter());
+
+            LOGGER.addHandler(fileHandler);
+            LOGGER.setLevel(Level.ALL);
+        } catch (IOException e) {
+            System.err.println("Neuspešna inicializacija loggerja: " + e.getMessage());
+            System.exit(-1);
+        }
     }
 }
