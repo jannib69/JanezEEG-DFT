@@ -21,7 +21,7 @@ public class FTDriver {
     private static final Logger LOGGER = Logger.getLogger(FTDriver.class.getName());
 
     public static void main(String[] args) throws Exception {
-        // Nastavi logiranje v datoteko
+        // Setup logging to file
         setupLogger();
 
         if (args.length != 2) {
@@ -29,7 +29,7 @@ public class FTDriver {
             System.exit(-1);
         }
 
-        LOGGER.info("Začenjanje Hadoop joba za DFT...");
+        LOGGER.info("Starting Hadoop job for DFT...");
 
         var conf = new Configuration();
         var job = Job.getInstance(conf, "Discrete Fourier Transform");
@@ -41,24 +41,37 @@ public class FTDriver {
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
+        // Set input and output paths
         FileInputFormat.addInputPath(job, new Path(args[0]));
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
+        // Set output format
         job.setOutputFormatClass(TextOutputFormat.class);
+
+        // Multiple outputs for various frequency bands
         MultipleOutputs.addNamedOutput(job, "realOutput", TextOutputFormat.class, Text.class, Text.class);
         MultipleOutputs.addNamedOutput(job, "imagOutput", TextOutputFormat.class, Text.class, Text.class);
+        MultipleOutputs.addNamedOutput(job, "deltaOutput", TextOutputFormat.class, Text.class, Text.class); // Added for Delta
+        MultipleOutputs.addNamedOutput(job, "thetaOutput", TextOutputFormat.class, Text.class, Text.class); // Added for Theta
+        MultipleOutputs.addNamedOutput(job, "alphaOutput", TextOutputFormat.class, Text.class, Text.class);
+        MultipleOutputs.addNamedOutput(job, "betaOutput", TextOutputFormat.class, Text.class, Text.class);
+        MultipleOutputs.addNamedOutput(job, "gammaOutput", TextOutputFormat.class, Text.class, Text.class);
 
-        LOGGER.info("Hadoop job konfiguracija je pripravljena.");
+        LOGGER.info("Hadoop job configuration is set.");
 
+        // Run job and check for completion
         if (job.waitForCompletion(true)) {
-            LOGGER.info("Hadoop job je uspešno zaključen.");
+            LOGGER.info("Hadoop job completed successfully.");
             System.exit(0);
         } else {
-            LOGGER.severe("Hadoop job je spodletel.");
+            LOGGER.severe("Hadoop job failed.");
             System.exit(1);
         }
     }
 
+    /**
+     * Setup Logger for writing to a file.
+     */
     private static void setupLogger() {
         try {
             var fileHandler = new FileHandler(new File("job_logs.log").getAbsolutePath(), true);
@@ -67,7 +80,7 @@ public class FTDriver {
             LOGGER.addHandler(fileHandler);
             LOGGER.setLevel(Level.ALL);
         } catch (IOException e) {
-            System.err.println("Neuspešna inicializacija loggerja: " + e.getMessage());
+            System.err.println("Failed to initialize logger: " + e.getMessage());
             System.exit(-1);
         }
     }
