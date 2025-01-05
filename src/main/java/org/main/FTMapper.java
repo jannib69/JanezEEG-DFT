@@ -11,9 +11,9 @@ import java.util.logging.Logger;
 
 public class FTMapper extends Mapper<LongWritable, Text, Text, Text> {
 
-    private static final int SEGMENT_LENGTH = 2048 * 2; // Segment length
+    private static final int SEGMENT_LENGTH = 2048;
     private static final Logger LOGGER = Logger.getLogger(FTMapper.class.getName());
-    private static final int FS = 500; // Sampling frequency (500 Hz for EEG data)
+    private static final int FS = 500;
 
     @Override
     protected void setup(Context context) {
@@ -22,27 +22,25 @@ public class FTMapper extends Mapper<LongWritable, Text, Text, Text> {
 
     @Override
     protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-        LOGGER.info("Processing line: " + value.toString());
+        var line = value.toString().trim();
+        LOGGER.info("Processing line: " + line);
 
-        // Split the line into columns
-        var columns = value.toString().split(",");
+        var columns = line.split(",");
         if (columns.length < 2) {
-            LOGGER.warning("Skipping line due to insufficient columns: " + value.toString());
+            LOGGER.warning("Skipping line due to insufficient columns: " + line);
             return;
         }
 
-        String electrodeName = columns[0];
-        double[] signal = parseSignal(columns);
-        int N = signal.length;
-
-        if (N < SEGMENT_LENGTH) {
-            LOGGER.warning("Signal is shorter than segment length: " + N);
+        var electrodeName = columns[0];
+        var signal = parseSignal(columns);
+        if (signal.length < SEGMENT_LENGTH) {
+            LOGGER.warning("Skipping line: signal is shorter than segment length");
             return;
         }
 
         double freqResolution = (double) FS / SEGMENT_LENGTH;
 
-        // Frequency bins for Delta (0.5-4 Hz), Theta (4-8 Hz), Alpha (8-12 Hz), Beta (13-30 Hz), Gamma (30-100 Hz)
+        // Frequency bins for EEG bands
         int deltaStart = (int) Math.floor(0.5 / freqResolution);
         int deltaEnd = (int) Math.ceil(4 / freqResolution);
         int thetaStart = (int) Math.floor(4 / freqResolution);
@@ -54,20 +52,15 @@ public class FTMapper extends Mapper<LongWritable, Text, Text, Text> {
         int gammaStart = (int) Math.floor(30 / freqResolution);
         int gammaEnd = (int) Math.ceil(100 / freqResolution);
 
-        LOGGER.info("Delta bins range: " + deltaStart + " to " + deltaEnd);
-        LOGGER.info("Theta bins range: " + thetaStart + " to " + thetaEnd);
-        LOGGER.info("Alpha bins range: " + alphaStart + " to " + alphaEnd);
-        LOGGER.info("Beta bins range: " + betaStart + " to " + betaEnd);
-        LOGGER.info("Gamma bins range: " + gammaStart + " to " + gammaEnd);
-
-        for (int start = 0; start < N; start += SEGMENT_LENGTH) {
-            int end = Math.min(start + SEGMENT_LENGTH, N);
+        // Process each segment
+        for (int start = 0; start < signal.length; start += SEGMENT_LENGTH) {
+            int end = Math.min(start + SEGMENT_LENGTH, signal.length);
             var segment = Arrays.copyOfRange(signal, start, end);
-            LOGGER.info("Processing segment [" + start + ":" + end + "] for " + electrodeName);
 
             var realParts = new double[segment.length];
             var imagParts = new double[segment.length];
 
+            // DFT calculation for the segment
             for (var k = 0; k < segment.length; k++) {
                 var sumReal = 0.0;
                 var sumImag = 0.0;
@@ -80,62 +73,42 @@ public class FTMapper extends Mapper<LongWritable, Text, Text, Text> {
                 imagParts[k] = sumImag;
             }
 
-            // Calculate power in frequency bands
-            double deltaPower = calculateBandPower(realParts, imagParts, deltaStart, deltaEnd);
-            double thetaPower = calculateBandPower(realParts, imagParts, thetaStart, thetaEnd);
-            double alphaPower = calculateBandPower(realParts, imagParts, alphaStart, alphaEnd);
-            double betaPower = calculateBandPower(realParts, imagParts, betaStart, betaEnd);
-            double gammaPower = calculateBandPower(realParts, imagParts, gammaStart, gammaEnd);
+            var delta = calculateBandPower(realParts, imagParts, deltaStart, deltaEnd);
+            var theta = calculateBandPower(realParts, imagParts, thetaStart, thetaEnd);
+            var alpha = calculateBandPower(realParts, imagParts, alphaStart, alphaEnd);
+            var beta = calculateBandPower(realParts, imagParts, betaStart, betaEnd);
+            var gamma = calculateBandPower(realParts, imagParts, gammaStart, gammaEnd);
 
-            LOGGER.info(String.format("Computed Power -> Delta: %.2f, Theta: %.2f, Alpha: %.2f, Beta: %.2f, Gamma: %.2f",
-                    deltaPower, thetaPower, alphaPower, betaPower, gammaPower));
+            double totalPower = delta + theta + alpha + beta + gamma;
 
-            // Output format: Real part | Imaginary part | Delta | Theta | Alpha | Beta | Gamma
-            context.write(new Text(electrodeName), new Text(String.join("|",
-                    Arrays.toString(realParts).replace("[", "").replace("]", "").replace(" ", ""),
-                    Arrays.toString(imagParts).replace("[", "").replace("]", "").replace(" ", ""),
-                    String.valueOf(deltaPower), String.valueOf(thetaPower), String.valueOf(alphaPower),
-                    String.valueOf(betaPower), String.valueOf(gammaPower))));
+            double normDelta = delta / totalPower;
+            double normTheta = theta / totalPower;
+            double normAlpha = alpha / totalPower;
+            double normBeta = beta / totalPower;
+            double normGamma = gamma / totalPower;
+
+            context.write(new Text(electrodeName),
+                    new Text(normDelta + "," + normTheta + "," + normAlpha + "," + normBeta + "," + normGamma));
         }
     }
 
-    /**
-     * Parse the signal from the input data.
-     *
-     * @param columns The columns of the input data
-     * @return The signal as a double array
-     */
     private double[] parseSignal(String[] columns) {
-        var signal = new double[columns.length - 1]; // Columns containing the signal
-        for (var i = 1; i < columns.length; i++) {
+        double[] signal = new double[columns.length - 1];
+        for (int i = 1; i < columns.length; i++) {
             try {
-                signal[i - 1] = Double.parseDouble(columns[i].trim());
+                signal[i - 1] = Double.parseDouble(columns[i]);
             } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid number format at column " + i + ": " + columns[i]);
                 signal[i - 1] = 0.0;
             }
         }
         return signal;
     }
 
-    /**
-     * Calculate the average power of the signal for a given frequency band.
-     *
-     * @param realParts Real parts of the DFT
-     * @param imagParts Imaginary parts of the DFT
-     * @param start     The start bin (inclusive)
-     * @param end       The end bin (inclusive)
-     * @return The average power for the frequency band
-     */
     private double calculateBandPower(double[] realParts, double[] imagParts, int start, int end) {
-        if (start >= realParts.length) {
-            LOGGER.warning("Start index exceeds realParts length: " + start);
-            return 0.0;
+        double sum = 0.0;
+        for (var k = start; k <= end && k < realParts.length; k++) {
+            sum += Math.sqrt(realParts[k] * realParts[k] + imagParts[k] * imagParts[k]);
         }
-        double powerSum = 0.0;
-        for (int k = start; k <= end && k < realParts.length; k++) {
-            powerSum += Math.sqrt(realParts[k] * realParts[k] + imagParts[k] * imagParts[k]);
-        }
-        return powerSum / Math.max(1, (end - start + 1));
+        return sum / (end - start + 1);
     }
 }
