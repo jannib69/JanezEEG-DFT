@@ -46,8 +46,8 @@ public class FTMapper extends Mapper<LongWritable, Text, Text, Text> {
         int thetaStart = (int) Math.floor(4 / freqResolution);
         int thetaEnd = (int) Math.ceil(8 / freqResolution);
         int alphaStart = (int) Math.floor(8 / freqResolution);
-        int alphaEnd = (int) Math.ceil(12 / freqResolution);
-        int betaStart = (int) Math.floor(13 / freqResolution);
+        int alphaEnd = (int) Math.ceil(14 / freqResolution);
+        int betaStart = (int) Math.floor(14 / freqResolution);
         int betaEnd = (int) Math.ceil(30 / freqResolution);
         int gammaStart = (int) Math.floor(30 / freqResolution);
         int gammaEnd = (int) Math.ceil(100 / freqResolution);
